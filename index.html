@@ -383,8 +383,8 @@
       <input type="number" id="f-ranks" value="5" min="1" max="99" />
     </div>
     <div class="field">
-      <label>Cost / Rank</label>
-      <input type="number" id="f-cost" value="1" min="1" max="999" />
+      <label>Costs (comma-separated)</label>
+      <input type="text" id="f-cost" placeholder="e.g. 1,2,3" />
     </div>
     <div class="field add-btn-wrap" style="justify-content:flex-end">
       <label>&nbsp;</label>
@@ -430,7 +430,7 @@
   function uid() { return nextId++; }
 
   function totalSpent() {
-    return state.abilities.reduce((sum, a) => sum + a.currentRank * a.costPerRank, 0);
+    return state.abilities.reduce((sum, a) => sum + a.costs.slice(0, a.currentRank).reduce((s, c) => s + c, 0), 0);
   }
 
   function updatePointBar() {
@@ -460,9 +460,9 @@
 
     list.innerHTML = '';
     state.abilities.forEach(a => {
-      const cost = a.currentRank * a.costPerRank;
+      const cost = a.costs.slice(0, a.currentRank).reduce((s, c) => s + c, 0);
       const isSelected = a.currentRank > 0;
-      const wouldOverBudget = !isSelected && a.costPerRank > remaining;
+      const wouldOverBudget = !isSelected && a.costs[0] > remaining;
 
       const card = document.createElement('div');
       card.className = 'ability-card' + (isSelected ? ' selected' : '') + (isSelected && remaining < 0 ? ' over-budget' : '');
@@ -470,7 +470,7 @@
       card.innerHTML = `
         <div class="ability-info">
           <div class="ability-name">${escHtml(a.name)}</div>
-          <div class="ability-meta">${a.costPerRank} pt${a.costPerRank !== 1 ? 's' : ''} / rank &nbsp;·&nbsp; max ${a.maxRanks} rank${a.maxRanks !== 1 ? 's' : ''}</div>
+          <div class="ability-meta">Costs: ${a.costs.join(', ')} pts &nbsp;·&nbsp; max ${a.maxRanks} rank${a.maxRanks !== 1 ? 's' : ''}</div>
           <div class="over-label">over budget</div>
         </div>
         <div class="rank-control">
@@ -495,7 +495,7 @@
         const a = state.abilities.find(x => x.id == btn.dataset.id);
         if (!a) return;
         if (btn.dataset.action === 'up') {
-          const addCost = a.costPerRank;
+          const addCost = a.costs[a.currentRank];
           const rem = state.totalPoints - totalSpent();
           if (a.currentRank < a.maxRanks && addCost <= rem) {
             a.currentRank++;
@@ -550,7 +550,10 @@
 
   function loadBuild(build) {
     state.totalPoints = build.totalPoints;
-    state.abilities = build.abilities.map(a => ({ ...a, id: uid() }));
+    state.abilities = build.abilities.map(a => {
+      const costs = a.costs || (a.costPerRank ? Array(a.maxRanks).fill(a.costPerRank) : [1]);
+      return { ...a, costs, id: uid() };
+    });
     document.getElementById('total-pts').value = build.totalPoints;
     renderAbilities();
     updatePointBar();
@@ -586,11 +589,12 @@
   function addAbility() {
     const name = document.getElementById('f-name').value.trim();
     const ranks = parseInt(document.getElementById('f-ranks').value);
-    const cost = parseInt(document.getElementById('f-cost').value);
+    const costsStr = document.getElementById('f-cost').value.trim();
+    const costs = costsStr.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
     if (!name) { toast('Enter an ability name.'); document.getElementById('f-name').focus(); return; }
     if (isNaN(ranks) || ranks < 1) { toast('Max ranks must be at least 1.'); return; }
-    if (isNaN(cost) || cost < 1) { toast('Cost must be at least 1.'); return; }
-    state.abilities.push({ id: uid(), name, maxRanks: ranks, costPerRank: cost, currentRank: 0 });
+    if (costs.length !== ranks) { toast('Number of costs must match max ranks.'); return; }
+    state.abilities.push({ id: uid(), name, maxRanks: ranks, costs, currentRank: 0 });
     document.getElementById('f-name').value = '';
     document.getElementById('f-name').focus();
     renderAbilities();
@@ -606,7 +610,7 @@
     const snap = {
       name,
       totalPoints: state.totalPoints,
-      abilities: state.abilities.map(a => ({ name: a.name, maxRanks: a.maxRanks, costPerRank: a.costPerRank, currentRank: a.currentRank }))
+      abilities: state.abilities.map(a => ({ name: a.name, maxRanks: a.maxRanks, costs: a.costs, currentRank: a.currentRank }))
     };
     state.builds.push(snap);
     saveBuildsStorage();
@@ -636,7 +640,7 @@
   document.getElementById('export-btn').addEventListener('click', () => {
     const data = {
       totalPoints: state.totalPoints,
-      abilities: state.abilities.map(a => ({ name: a.name, maxRanks: a.maxRanks, costPerRank: a.costPerRank, currentRank: a.currentRank }))
+      abilities: state.abilities.map(a => ({ name: a.name, maxRanks: a.maxRanks, costs: a.costs, currentRank: a.currentRank }))
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -664,7 +668,7 @@
           id: uid(),
           name: String(a.name || 'Ability'),
           maxRanks: Math.max(1, parseInt(a.maxRanks) || 1),
-          costPerRank: Math.max(1, parseInt(a.costPerRank) || 1),
+          costs: Array.isArray(a.costs) ? a.costs.map(c => Math.max(1, parseInt(c) || 1)) : [1],
           currentRank: Math.max(0, parseInt(a.currentRank) || 0)
         }));
         renderAbilities();
@@ -680,11 +684,11 @@
 
   // Init with some example abilities
   const examples = [
-    { name: 'Fireball', maxRanks: 5, costPerRank: 2 },
-    { name: 'Ice Armor', maxRanks: 3, costPerRank: 3 },
-    { name: 'Swift Feet', maxRanks: 2, costPerRank: 2 },
-    { name: 'Critical Strike', maxRanks: 10, costPerRank: 1 },
-    { name: 'Mana Shield', maxRanks: 1, costPerRank: 5 },
+    { name: 'Fireball', maxRanks: 5, costs: [1,2,3,4,5] },
+    { name: 'Ice Armor', maxRanks: 3, costs: [3,3,3] },
+    { name: 'Swift Feet', maxRanks: 2, costs: [2,2] },
+    { name: 'Critical Strike', maxRanks: 10, costs: [1,1,1,1,1,1,1,1,1,1] },
+    { name: 'Mana Shield', maxRanks: 1, costs: [5] },
   ];
   examples.forEach(e => state.abilities.push({ id: uid(), currentRank: 0, ...e }));
 
